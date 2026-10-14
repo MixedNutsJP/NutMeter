@@ -35,6 +35,9 @@ TRUE_PEAK_LIMIT = -1.0               # dBTP
 CHORUS_SPREAD = 1.0                  # LU between choruses before it is flagged
 VOCAL_SPREAD = 2.0                   # dB of vocal lift between sections before it is flagged
 VELOCITY_SPREAD = 15                 # velocity between sections before a track is flagged
+VERSION_CHANGE = 1.0                 # dB a section may move against the comparison file before it is flagged
+RED_ON, RED_OFF = "\x01", "\x02"      # analyze() wraps the values behind a warning in these; see plain()
+WARN_MARK = "  ← 要確認"
 
 
 # ---------- loudness (ITU-R BS.1770-4) ----------
@@ -202,6 +205,20 @@ def num(v, n=7, d=1, sign=False):
     return f"{v:+{n}.{d}f}" if sign else f"{v:{n}.{d}f}"
 
 
+def red(s):
+    return f"{RED_ON}{s}{RED_OFF}"
+
+
+def plain(text):
+    """Report without the red markers; lines that had red parts get WARN_MARK at the end."""
+    out = []
+    for line in text.split("\n"):
+        if RED_ON in line:
+            line = line.replace(RED_ON, "").replace(RED_OFF, "") + (WARN_MARK if not line.lstrip().startswith(RED_ON + "・") else "")
+        out.append(line)
+    return "\n".join(out)
+
+
 def is_chorus(name):
     return name.lower().startswith("chorus") or "サビ" in name
 
@@ -220,7 +237,8 @@ def section_loudness(y, sr, bar_s, sections):
 # ---------- report ----------
 
 def analyze(mix, prev=None, offvocal=None, midi=None, tempo=120.0, sections=None, bar_threshold=3.0, progress=None):
-    """Return the report as text. `progress(message)` is called between steps."""
+    """Return the report as text. Values behind a warning are wrapped in RED_ON / RED_OFF (use plain() for files).
+    `progress(message)` is called between steps."""
     step = progress or (lambda m: None)
     lines, warns = [], []
     say = lines.append
@@ -247,9 +265,10 @@ def analyze(mix, prev=None, offvocal=None, midi=None, tempo=120.0, sections=None
                                                    if il > STREAMING_TARGET else ""))
     say(f"  ラウドネスレンジ    {lra:6.1f} LU     (曲の中の音量の幅。小さいほど強弱が少ない)")
     say(f"  サンプルピーク      {peak:6.2f} dBFS")
-    say(f"  トゥルーピーク      {tp:6.2f} dBTP")
-    say(f"  クリップしたサンプル {clip:5d}")
-    say(f"  左右の相関          {corr:6.2f}    (1 に近いほどモノラルに近い)")
+    hot = lambda s, bad: red(s) if bad else s
+    say("  トゥルーピーク      " + hot(f"{tp:6.2f} dBTP", tp > TRUE_PEAK_LIMIT))
+    say("  クリップしたサンプル " + hot(f"{clip:5d}", clip > 0))
+    say("  左右の相関          " + hot(f"{corr:6.2f}", corr < 0.3) + "    (1 に近いほどモノラルに近い)")
     if tp > TRUE_PEAK_LIMIT:
         warns.append(f"トゥルーピークが {tp:.2f} dBTP で、{TRUE_PEAK_LIMIT:g} dBTP を超えています。MP3 などにすると音が割れることがあります。")
     if clip:
@@ -265,17 +284,19 @@ def analyze(mix, prev=None, offvocal=None, midi=None, tempo=120.0, sections=None
     say("  帯域の割合は dB(0 に近いほど、その帯域が音量を占めている)")
     say("  " + pad("セクション", w) + pad("小節", 9) + pad("LUFS", 8, True) + pad("最大との差", 12, True) + pad("段差", 8, True)
         + "  | " + "".join(pad(n, 8, True) for n, *_ in BANDS))
+    ch = [(n, v) for n, *_, v in sec if is_chorus(n) and np.isfinite(v)]
+    spread = max(v for _, v in ch) - min(v for _, v in ch) if len(ch) > 1 else 0.0
+    ch_odd = {min(ch, key=lambda c: c[1])[0], max(ch, key=lambda c: c[1])[0]} if spread > CHORUS_SPREAD else set()
     last = None
     for name, a0, b0, v in sec:
         s, e = span(sr, bar_s, a0, b0, len(y))
         stp = v - last if last is not None and np.isfinite(v) and np.isfinite(last) else None
-        say("  " + pad(name, w) + pad(f"{a0}-{b0}", 9) + num(v, 8) + num(v - loudest, 12, sign=True) + num(stp, 8, sign=True)
+        lv = red(num(v, 8)) if name in ch_odd else num(v, 8)
+        say("  " + pad(name, w) + pad(f"{a0}-{b0}", 9) + lv + num(v - loudest, 12, sign=True) + num(stp, 8, sign=True)
             + "  | " + "".join(f"{x:8.1f}" for x in band_shares(mono[s:e], sr)))
         last = v
-    ch = [(n, v) for n, *_, v in sec if is_chorus(n) and np.isfinite(v)]
     if len(ch) > 1:
-        spread = max(v for _, v in ch) - min(v for _, v in ch)
-        say(f"  サビ同士の差: {spread:.1f} LU")
+        say("  サビ同士の差: " + (red(f"{spread:.1f} LU") if spread > CHORUS_SPREAD else f"{spread:.1f} LU"))
         if spread > CHORUS_SPREAD:
             warns.append(f"サビ同士のラウドネスが {spread:.1f} LU 違います({CHORUS_SPREAD:g} LU 以内が目安)。")
 
@@ -284,7 +305,7 @@ def analyze(mix, prev=None, offvocal=None, midi=None, tempo=120.0, sections=None
     bar_l = lufs(block_power(kw, sr, bar_s, bar_s))
     say("")
     say(f"[3] セクションの中で {bar_threshold:g} dB 以上浮いている・沈んでいる小節(かっこ内はセクションの中央値)")
-    odd_all = []
+    odd_all, lines_at = [], {}
     for name, a0, b0, _ in sec:
         idx = [b for b in range(a0, b0 + 1) if b - 1 < len(bar_l) and bar_l[b - 1] > SILENT]
         if len(idx) < 3:
@@ -293,7 +314,8 @@ def analyze(mix, prev=None, offvocal=None, midi=None, tempo=120.0, sections=None
         odd = [(b, bar_l[b - 1] - med) for b in idx if abs(bar_l[b - 1] - med) > bar_threshold]
         if odd:
             odd_all += [b for b, _ in odd]
-            say("  " + pad(name, w) + f"[{med:6.1f}]  " + "  ".join(f"{b}小節: {d:+.1f}" for b, d in odd))
+            say("  " + pad(name, w) + f"[{med:6.1f}]  "
+                + "  ".join(red(f"{b}小節: {d:+.1f}") if b < n_bars else f"{b}小節: {d:+.1f}" for b, d in odd))
     if not odd_all:
         say("  なし")
     else:
@@ -306,7 +328,11 @@ def analyze(mix, prev=None, offvocal=None, midi=None, tempo=120.0, sections=None
             say("  ※最後の小節は余韻だけなので、小さく出るのが普通です。")
     say("  小節ごとのラウドネス(LUFS、1行 8 小節):")
     for i in range(0, len(bar_l), 8):
-        say(f"    {i + 1:3d}: " + " ".join(f"{v:6.1f}" if v > SILENT else "   ---" for v in bar_l[i:i + 8]))
+        cells = []
+        for j, v in enumerate(bar_l[i:i + 8]):
+            c = f"{v:6.1f}" if v > SILENT else "   ---"
+            cells.append(red(c) if i + j + 1 in odd_all and i + j + 1 < n_bars else c)
+        say(f"    {i + 1:3d}: " + " ".join(cells))
 
     # 4. vocal lift
     say("")
@@ -321,16 +347,17 @@ def analyze(mix, prev=None, offvocal=None, midi=None, tempo=120.0, sections=None
             ov = {n: v for n, *_, v in off_sec}
             say(f"  オフボーカル全体: {integrated(kwo, so):.1f} LUFS")
             say("  " + pad("セクション", w) + pad("小節", 9) + pad("ミックス", 10, True) + pad("オフボーカル", 14, True) + pad("押し出し", 10, True))
-            rows = []
-            for name, a0, b0, v in sec:
-                if name not in ov:
-                    continue
-                rows.append(v - ov[name])
-                say("  " + pad(name, w) + pad(f"{a0}-{b0}", 9) + num(v, 10) + num(ov[name], 14) + num(v - ov[name], 10, sign=True))
-            sung = [d for d in rows if d > 0.5]
+            rows = [(name, a0, b0, v, v - ov[name]) for name, a0, b0, v in sec if name in ov]
+            sung = [d for *_, d in rows if d > 0.5]
+            wide = len(sung) > 1 and max(sung) - min(sung) > VOCAL_SPREAD
+            for name, a0, b0, v, d in rows:
+                lift = num(d, 10, sign=True)
+                say("  " + pad(name, w) + pad(f"{a0}-{b0}", 9) + num(v, 10) + num(ov[name], 14)
+                    + (red(lift) if wide and d in (min(sung), max(sung)) else lift))
             if len(sung) > 1:
-                say(f"  ボーカルのあるセクションでの幅: {min(sung):+.1f} 〜 {max(sung):+.1f} dB")
-                if max(sung) - min(sung) > VOCAL_SPREAD:
+                rng = f"{min(sung):+.1f} 〜 {max(sung):+.1f} dB"
+                say("  ボーカルのあるセクションでの幅: " + (red(rng) if wide else rng))
+                if wide:
                     warns.append(f"ボーカルの押し出し具合がセクションによって {max(sung) - min(sung):.1f} dB 違います"
                                  "(伴奏が薄いセクションで大きくなるのは自然です。サビ同士などで揃っているかを見てください)。")
     else:
@@ -348,10 +375,26 @@ def analyze(mix, prev=None, offvocal=None, midi=None, tempo=120.0, sections=None
             sp_sec, kwp = section_loudness(yp, sp, bar_s, secs)
             pv = {n: v for n, *_, v in sp_sec}
             say(f"  {os.path.basename(prev)} → {os.path.basename(mix)}")
-            say(f"  全体: {integrated(kwp, sp):.1f} → {il:.1f} LUFS({il - integrated(kwp, sp):+.1f})")
+            il_p = integrated(kwp, sp)
+            whole = il - il_p
+            line = f"{il_p:.1f} → {il:.1f} LUFS({whole:+.1f})"
+            say("  全体: " + (red(line) if abs(whole) >= VERSION_CHANGE else line))
+            if abs(whole) >= VERSION_CHANGE:
+                warns.append(f"全体のラウドネスが比較用から {whole:+.1f} dB 変わっています(意図した変更なら問題ありません)。")
+            # a section is flagged when it moved differently from the whole file, so a plain gain change flags nothing
+            say("  " + pad("セクション", w) + pad("小節", 9) + pad("変化", 10, True) + pad("全体との差", 12, True))
+            moved = []
             for name, a0, b0, v in sec:
                 if name in pv:
-                    say("  " + pad(name, w) + pad(f"{a0}-{b0}", 9) + num(v - pv[name], 7, sign=True) + " dB")
+                    d = v - pv[name]
+                    rel = num(d - whole, 12, sign=True)
+                    if abs(d - whole) >= VERSION_CHANGE:
+                        moved.append(f"{name}({d - whole:+.1f})")
+                        rel = red(rel)
+                    say("  " + pad(name, w) + pad(f"{a0}-{b0}", 9) + num(d, 10, sign=True) + rel)
+            if moved:
+                warns.append(f"全体の変化と比べて {VERSION_CHANGE:g} dB 以上違う動きをしたセクションがあります: " + "、".join(moved)
+                             + "(意図した変更なら問題ありません)。")
     else:
         say("  飛ばしました: 比較用オーディオファイルが指定されていません。")
 
@@ -367,7 +410,7 @@ def analyze(mix, prev=None, offvocal=None, midi=None, tempo=120.0, sections=None
         head.append("  セクション: 指定がないため 8 小節ごとに区切っています")
     head.append("")
     head.append(f"■ 要確認({len(warns)} 件)")
-    head += [f"  ・{x}" for x in warns] or ["  特になし"]
+    head += [f"  {red('・' + x)}" for x in warns] or ["  特になし"]
     head.append("")
     step("完了")
     return "\n".join(head + lines) + "\n"
@@ -396,8 +439,9 @@ def midi_report(path, sections, say, warns):
             continue
         med = {n: float(np.median(v)) for n, v in per.items()}
         spread = max(med.values()) - min(med.values())
+        cell = f"{spread:6.0f}"
         say("  " + pad(tr.name or "(名前なし)", tw) + "".join(f"{med[n]:10.0f}" if n in med else pad("-", 10, True) for n in names)
-            + f"{spread:6.0f}")
+            + (red(cell) if spread >= VELOCITY_SPREAD else cell))
         if spread >= VELOCITY_SPREAD:
             flagged.append(f"{tr.name}({spread:.0f})")
     if flagged:
@@ -419,6 +463,7 @@ def main():
     text = analyze(a.mix, prev=a.prev or find_previous(a.mix), offvocal=a.offvocal or find_offvocal(a.mix), midi=a.midi,
                    tempo=tempo, sections=parse_sections(a.sections), bar_threshold=a.bar_threshold)
     sys.stdout.reconfigure(encoding="utf-8")
+    text = plain(text)
     print(text, end="")
     if a.report:
         with open(a.report, "w", encoding="utf-8-sig") as f:
