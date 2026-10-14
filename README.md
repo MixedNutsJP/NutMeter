@@ -130,6 +130,14 @@ dist\NutMeter\NutMeter.exe --selftest <オーディオファイル> <結果.txt>
 
 バージョンを上げるときは、`nutmeter.py` の `VERSION`、`はじめにお読みください.txt` の1行目、ZIP のファイル名を揃えて変えてください。
 
-## ライセンス
+## ライセンス / License
 
-[MIT License](LICENSE)
+MIT License — 詳細は [LICENSE](LICENSE) を参照してください。
+See [LICENSE](LICENSE) for details.
+
+再配布・改変は自由ですが、**著作権表示(`Copyright (c) 2026 MixedNuts`)とライセンス文を必ず残してください。**
+MIT ライセンスの条件です。この表示が、元の作者が MixedNuts であることのクレジットになります。
+
+You are free to redistribute and modify this, but **the copyright notice
+(`Copyright (c) 2026 MixedNuts`) and the license text must be retained** — that is a
+condition of the MIT License, and it credits MixedNuts as the original author.
