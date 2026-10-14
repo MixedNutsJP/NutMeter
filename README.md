@@ -129,3 +129,7 @@ dist\NutMeter\NutMeter.exe --selftest <オーディオファイル> <結果.txt>
 ```
 
 バージョンを上げるときは、`nutmeter.py` の `VERSION`、`はじめにお読みください.txt` の1行目、ZIP のファイル名を揃えて変えてください。
+
+## ライセンス
+
+[MIT License](LICENSE)
