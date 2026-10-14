@@ -1,0 +1,8 @@
+# build output and the release ZIP (the ZIP is attached to GitHub Releases)
+release/
+build/
+dist/
+*.spec
+buildenv/
+__pycache__/
+*.pyc
