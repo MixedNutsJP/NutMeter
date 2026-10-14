@@ -9,7 +9,7 @@
 
 ## 配布用 ZIP
 
-`release/NutMeter_v<バージョン>.zip` を渡してください。中身は次のとおりです。
+[Releases](https://github.com/MixedNutsJP/NutMeter/releases) から `NutMeter_v<バージョン>.zip` をダウンロードして渡してください。中身は次のとおりです。
 
 ```
 NutMeter/
@@ -105,7 +105,7 @@ python -X utf8 mix_level_check.py <オーディオファイル> [オプション
 | `nutmeter.py` | GUI(Tk) |
 | `assets/nutmeter.ico` | アイコン(`assets/make_icon.py` で生成) |
 | `assets/はじめにお読みください.txt` | ZIP に同梱する利用者向けの説明 |
-| `release/` | 配布用 ZIP |
+| `release/` | ビルドした配布用 ZIP の置き場(Git の管理外。ZIP は Releases に添付する) |
 
 ## ビルド手順
 
@@ -120,7 +120,7 @@ buildenv\Scripts\pyinstaller --noconfirm --clean --windowed --onedir --name NutM
   nutmeter.py
 ```
 
-できた `dist\NutMeter\` に `assets\はじめにお読みください.txt` をコピーし、`NutMeter` フォルダごと ZIP にします。ZIP は、パスの区切りが `/` になるツール(Python の `zipfile` など)で作ってください。Windows PowerShell 5.1 の `Compress-Archive` などは `\` で書き込むことがあり、解凍ツールによっては正しく展開できません。
+できた `dist\NutMeter\` に `assets\はじめにお読みください.txt` をコピーし、`NutMeter` フォルダごと ZIP にします。ZIP は、パスの区切りが `/` になるツール(Python の `zipfile` など)で作ってください。Windows PowerShell 5.1 の `Compress-Archive` などは `\` で書き込むことがあり、解凍ツールによっては正しく展開できません。 作った ZIP は `gh release create v<バージョン> <ZIP>` で Releases に添付します。
 
 exe が動くかは、画面を出さずに解析だけ実行するモードで確認できます。
 
